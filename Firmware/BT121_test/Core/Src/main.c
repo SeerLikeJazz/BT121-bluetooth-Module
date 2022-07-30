@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -61,6 +62,8 @@ uint8_t ep;
 uint32_t frequency;        // ticks per second
 uint32_t t1, t2;           // ticks
 double elapsedTime;
+
+uint8_t UartTxClp = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -78,30 +81,52 @@ void SystemClock_Config(void);
  * @param data_len Optional variable data length.
  * @param data Optional variable data.
  */
+uint8_t dataframe[300];
+uint8_t length;
 static void on_message_send(uint8 msg_len, uint8* msg_data, uint16 data_len, uint8* data)
 {
-    /** Variable for storing function return values. */
-    int ret;
-    HAL_UART_Transmit(&huart1, msg_data, msg_len, 0xFF);
-
-
-//    ret = uart_tx(msg_len, msg_data);
-//    if(ret < 0)
+    /*1- polling可以使用*/
+//    HAL_UART_Transmit(&huart1, msg_data, msg_len, 0xFF);
+//    if(data_len && data)
 //    {
-//        printf("on_message_send() - failed to write to serial port %s, ret: %d, errno: %d\n", uart_port, ret, errno);
-//        exit(EXIT_FAILURE);
+//        HAL_UART_Transmit(&huart1, data, data_len, 0xFF);
+//    }
+    /*2- polling 合并可以使用*/
+//    for (int i = 0; i < msg_len; i++) {
+//        dataframe[i] = *msg_data++;
+//    }
+//    if(data_len && data)
+//    {
+//        for (int i = 0; i < data_len; i++) {
+//            dataframe[msg_len + i] = *data++;
+//        }
+//        HAL_UART_Transmit(&huart1, dataframe, msg_len + data_len, 0xFF);
+//    }
+//    else{
+//        HAL_UART_Transmit(&huart1, dataframe, msg_len , 0xFF);
 //    }
 
+    /*3- DMA 合并可以使用*/
+    for (int i = 0; i < msg_len; i++) {
+        dataframe[i] = *msg_data++;
+    }
     if(data_len && data)
     {
-        HAL_UART_Transmit(&huart1, data, data_len, 0xFF);
-//        ret = uart_tx(data_len, data);
-//        if(ret < 0)
-//        {
-//            printf("on_message_send() - failed to write to serial port %s, ret: %d, errno: %d\n", uart_port, ret, errno);
-//            exit(EXIT_FAILURE);
-//        }
+        for (int i = 0; i < data_len; i++) {
+            dataframe[msg_len + i] = *data++;
+        }
+        if(UartTxClp){
+            UartTxClp = 0;
+            HAL_UART_Transmit_DMA(&huart1, dataframe, msg_len + data_len);
+        }
     }
+    else{
+        if(UartTxClp){
+            UartTxClp = 0;
+            HAL_UART_Transmit_DMA(&huart1, dataframe, msg_len);
+        }
+    }
+
 }
 // Function for printing out the Bluetooth address **initially used for debugging purposes
 void print_address(uint8_t address[6]){
@@ -110,14 +135,16 @@ void print_address(uint8_t address[6]){
 /**
 * Send one frame of data
 */
+uint8_t send_index;
 void send_one_frame(uint8_t ep, unsigned int amount, unsigned int counter)
 {
     uint8_t frame[256];
 
     if (amount > 250) return; // max frame size
 
+//    frame[0] = send_index++;
     for (unsigned int i = 0; i < amount; i++){
-        frame[i] = (uint8_t) counter++;
+        frame[i] = (uint8_t) i;
     }
     dumo_cmd_endpoint_send(ep, amount, (void *) frame);
 }
@@ -151,10 +178,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  /*注册重定向的串口号*/
+  /*注册重定向的串口�???*/
   RetargetInit(&huart2);
   BGLIB_INITIALIZE(on_message_send);
 
@@ -175,44 +203,21 @@ int main(void)
    * Read enough data from serial port for the BGAPI message header.
    */
       HAL_UART_Receive(&huart1, buffer, BGLIB_MSG_HEADER_LEN, 0xFF);
-//      ret = uart_rx(BGLIB_MSG_HEADER_LEN, buffer);
-//      if (ret < 0)
-//      {
-//          printf("main() - failed to read from serial port %s, ret: %d, errno: %d\n", uart_port, ret, errno);
-//          exit(EXIT_FAILURE);
-//      }
-//
-//      /**
-//       * The buffer now contains the message header. See BGAPI protocol definition for details on packet format.
-//       */
+      /**
+       * The buffer now contains the message header. See BGAPI protocol definition for details on packet format.
+       */
       msg_length = BGLIB_MSG_LEN(buffer);
-//
-//      /**
-//       * Read the payload data if required and store it after the header.
-//       */
+      /**
+       * Read the payload data if required and store it after the header.
+       */
       if(msg_length)
       {
           HAL_UART_Receive(&huart1, &buffer[BGLIB_MSG_HEADER_LEN], msg_length, 0xFF);
-//          ret = uart_rx(msg_length, &buffer[BGLIB_MSG_HEADER_LEN]);
-          if(ret < 0)
-          {
-//              printf("main() - failed to read from serial port %s, ret: %d, errno: %d\n", uart_port, ret, errno);
-//              exit(EXIT_FAILURE);
-          }
       }
-//
+
       pck= BGLIB_MSG(buffer);
-//
-//
-//      //unsigned int amount_to_send;
-//      //uint8_t ep;
+
       unsigned int frame_size = 250;
-//      //LARGE_INTEGER frequency;        // ticks per second
-//      //LARGE_INTEGER t1, t2;           // ticks
-//      //double elapsedTime;
-//
-//      // get ticks per second
-//      QueryPerformanceFrequency(&frequency);
 
       switch(BGLIB_MSG_ID(buffer))
       {
@@ -239,8 +244,6 @@ int main(void)
                   printf("Setting discoverable, connectable & bondable on\n");
                   /*Set Bluetooth BR/EDR mode to connectable*/
                   dumo_cmd_bt_gap_set_mode(1, 1, 0);
-                  /*Set bondable mode*/
-                  dumo_cmd_sm_set_bondable_mode(1);
               }
               else
               {
@@ -248,20 +251,12 @@ int main(void)
               }
               break;
           case dumo_rsp_bt_gap_set_mode_id:
-//              if (pck->rsp_bt_gap_set_mode.result == 0)
-//              {
-//                  /*Set Bluetooth LE mode also to connectable*/
-//                  printf("Set Bluetooth LE mode also to connectable\n");
-//                  dumo_cmd_le_gap_set_mode(2, 2);
-//              }
-              break;
-          case dumo_rsp_le_gap_set_mode_id:
-//              if (pck->rsp_le_gap_set_mode.result == 0)
-//              {
-//                  /*Set bondable mode*/
-//                  printf("Set bondable mode\n");
-//                  dumo_cmd_sm_set_bondable_mode(1);
-//              }
+              if (pck->rsp_bt_gap_set_mode.result == 0)
+              {
+                  /*Set bondable mode*/
+                  printf("Set bondable mode\n");
+                  dumo_cmd_sm_set_bondable_mode(1);
+              }
               break;
           case dumo_rsp_sm_set_bondable_mode_id:
               if (pck->rsp_sm_set_bondable_mode.result == 0)
@@ -381,11 +376,6 @@ int main(void)
                   printf("lzx:endpoint_closed\n");
               }
               break;
-          case dumo_evt_le_connection_closed_id:
-//              /*Le connection is closed, set mode to connectable*/
-//              dumo_cmd_le_gap_set_mode(2, 2);
-              break;
-
       }
       memset(&buffer, 0 , sizeof(buffer));
 
@@ -449,8 +439,25 @@ void SystemClock_Config(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    /* Set transmission flag: transfer complete*/
+    if(huart->Instance == USART1) {
+        UartTxClp = 1;
+    }
 
 }
+
+
+////先将时钟源选择为内部时钟
+//RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK;
+//RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+//if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+//{
+//      Error_Handler();
+//}
 /* USER CODE END 4 */
 
 /**
